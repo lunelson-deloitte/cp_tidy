@@ -23,6 +23,10 @@ from loguru import logger
 ### testing
 #   + see what engagements are doing; include functions in TidyDataFrame
 #       + package common operations in class
+### (future) resources
+#   + different notebooks for pyspark.sql.DataFrame and TidyDataFrame
+#       + demo for value add
+#   + comparison of "typical/daily" workflow and proposed workflow
 
 
 class EmptyDataFrameWarning(UserWarning):
@@ -39,53 +43,53 @@ class MethodNotFoundWarning(UserWarning):
 
 @define
 class TidyDataFrame:
-    data: pyspark.sql.DataFrame = field(
-        validator=validators.instance_of(pyspark.sql.DataFrame),
-        repr=lambda self: f"DataFrame [{self.n_rows if self.n_rows is not None else '???'} rows x {self.n_cols if self.n_cols is not None else '???'} cols]",
-    )
+    data: pyspark.sql.DataFrame = field(validator=validators.instance_of(pyspark.sql.DataFrame))
     toggle_count: bool = field(default=True, validator=validators.instance_of(bool))
     toggle_display: bool = field(default=True, validator=validators.instance_of(bool))
     toggle_timer: bool = field(default=True, validator=validators.instance_of(bool))
-    n_rows: int = field(default=None)
-    n_cols: int = field(default=-1)
+    toggle_message: bool = field(default=True, validator=validators.instance_of(bool))
+    n_rows: int = field(default=None) # TODO: no need for default value
+    n_cols: int = field(default=-1)   # TODO: no need for default value
 
-    # def __getattr__(self, attr):
-    #     '''Undefined methods sourced to data'''
-    #     return getattr(self.data, attr)
+    ### logger.add(message=...)
+
+    def __attrs_post_init__(self):
+        """Define attributes after initializing a TidyDataFrame"""
+        self.n_rows = self.count()
+        self.n_cols = len(self.data.columns)
+
+    def __repr__(self):
+        """String representation of TidyDataFrame"""
+        data_repr = f"TidyDataFrame[{self.n_rows:,} rows x {self.n_cols:,} cols]"
+        count_repr = None if self.toggle_count else "count"
+        display_repr = None if self.toggle_display else "display"
+        toggle_repr = filter(lambda t: t is not None, [count_repr, display_repr])
+        return f"{data_repr} (disabled: {', '.join(toggle_repr)})"
 
     def _log_operation(
-        self, operation="custom", message="method not covered by TidyDataFrame", level='INFO'
+        self,
+        operation="custom",
+        message="method not covered by TidyDataFrame",
+        level="INFO",
     ):
-        """Simple logger invoked by masked methods."""
+        """Simple logger invoked by decorated methods."""
         logger_func = getattr(logger, level.strip().lower())
         logger_func(f"#> {operation}: {message}")
 
-    def _format_message(self, content):
-        message = content
-        if isinstance(content, Iterable):
-            N_CHAR_THRESHOLD = 50
-            # if len(content) > 5:
-            #     content = content[:5]
-            message = ", ".join(content)
-            if len(message) > N_CHAR_THRESHOLD:
-                message = message[: (N_CHAR_THRESHOLD - 5)] + "..."
-        return message
-    
     @property
     def columns(self):
         """Return all column names as a list"""
         return self.data.columns
-    
+
     @property
     def dtypes(self):
         """Return all column names and data types as a list"""
         return self.data.dtypes
-    
+
     @property
     def describe(self, *cols):
         """Compute basic statistics for numeric and string columns."""
         return self.data.describe(*cols)
-
 
     def display(self):
         """
@@ -99,7 +103,9 @@ class TidyDataFrame:
         ability to display to the console by passing `toggle_display = True`.
         """
         if not self.toggle_display:
-            self._log_operation(operation="display", message="feature toggled off", level="WARNING")
+            self._log_operation(
+                operation="display", message="feature toggled off", level="WARNING"
+            )
         else:
             self.data.display()
 
@@ -128,6 +134,7 @@ class TidyDataFrame:
         if self.toggle_count:
             if self.n_rows is None:  # not yet defined, compute row count
                 self.n_rows = self.data.count()
+                print(self.__repr__()) # print out string representation (repr)
                 if self.n_rows == 0:
                     warn("Provided data is empty", EmptyDataFrameWarning)
             if result is not None:  # result computed, recompute row count
@@ -151,7 +158,9 @@ class TidyDataFrame:
                     return "no columns dropped"
                 if n_post == 0:
                     return "all columns dropped"
-                return f"selected {n_post:,} column(s) ({self._format_message(set(post))})"
+                return (
+                    f"selected {n_post:,} column(s) ({self._format_message(set(post))})"
+                )
 
             self._log_operation(
                 operation="select", message=get_message(pre=cols_pre, post=cols_post)
@@ -205,41 +214,66 @@ class TidyDataFrame:
         # needed to prevent masking of `col` function by `col` parameter
         import pyspark.sql.functions as f
 
-        n_rows = self.data.count() if self.toggle_count else None
-        result = TidyDataFrame(
-            self.data.withColumn(colName=colName, col=col),
-            toggle_count=self.toggle_count,
-        )
-        n_null = (
-            result.data.select(colName).filter(f.col(colName).isNull()).count()
+        n_rows = self.count()
+        n_null_before = -1
+        if colName in self.data.columns:
+            n_null_before = (
+                self.data.select(colName).filter(f.col(colName).isNull()).count()
+                if self.toggle_count
+                else None
+            )
+        result = self.data.withColumn(colName=colName, col=col)
+        n_null_after = (
+            result.select(colName).filter(f.col(colName).isNull()).count()
             if self.toggle_count
             else None
         )
-        col_info = filterfalse(lambda t: t[0] != colName, result.data.dtypes)
+        col_info = filterfalse(lambda t: t[0] != colName, result.dtypes)
 
-        def get_message(total: int, invalid: int, col_info: tuple[str]):
+        def get_message(
+            total: int,
+            invalid_before: int = -1,
+            invalid_after: int = 0,
+            col_info: tuple[str] = tuple(),
+        ):
             col_name, col_type = col_info
             if not self.toggle_count:
                 qualification = "no count performed"
             else:
-                assert invalid <= total, "Unsure how mutate returned more rows?"
-                if invalid == total:
-                    qualification = "all values are NULL"
-                elif invalid == 0:
-                    qualification = "no values are NULL"
-                else:
-                    qualification = f"with {invalid:,} ({(total - invalid) / total:.2%}) NULL values"
-            return f"created '{col_name}' ({col_type}), {qualification}"
+
+                def n_invalid(n, total=total, when="before"):
+                    if n == -1:
+                        return ""
+                    return f"({when}) {n:,} ({(n)/total:.2%}) values are NULL"
+
+                qualification = f"{n_invalid(invalid_before)}{'' if invalid_before == -1 else ', '}{n_invalid(invalid_after, when='after')}"
+            return f"created '{col_name}' ({col_type}): {qualification}"
 
         self._log_operation(
             operation="mutate",
             message=get_message(
                 total=n_rows,
-                invalid=n_null,
+                invalid_before=n_null_before,
+                invalid_after=n_null_after,
                 col_info=tuple(col_info)[0],  # yield, unnest
             ),
         )
-        return result
+        return TidyDataFrame(
+            result,
+            toggle_count=self.toggle_count,
+            toggle_display=self.toggle_display,
+            n_rows=self.n_rows,
+        )
+
+    def withColumns(self, *colsMap):
+        result = self.data.withColumns(*colsMap)
+        self._log_operation(operation="mutate", message=f"message not yet created")
+        return TidyDataFrame(
+            result,
+            toggle_count=self.toggle_count,
+            toggle_display=self.toggle_display,
+            n_rows=self.n_rows,
+        )
 
     def withColumnRenamed(self, existing: str, new: str):
         result = self.data.withColumnRenamed(existing=existing, new=new)
@@ -304,16 +338,13 @@ class TidyDataFrame:
             n_rows=self.n_rows,
         )
 
-
     def dropDuplicates(self, subset=None):
         """Alias for `drop_duplicates`"""
         return self.drop_duplicates(subset=subset)
-    
 
-    def dropna(self, how='any', thresh=None, subset=None):
+    def dropna(self, how="any", thresh=None, subset=None):
         """Return DataFrame omitting rows with null values"""
         return self.data.dropna(how=how, thresh=thresh, subset=subset)
-
 
     def distinct(self):
         n_rows_pre = self.count()
@@ -335,12 +366,9 @@ class TidyDataFrame:
             n_rows=self.n_rows,
         )
 
-    
     def union(self, other):
         result = self.data.union(other)
-        self._log_operation(
-            operation="union", message="...original"
-        )
+        self._log_operation(operation="union", message="...original")
         return TidyDataFrame(
             result,
             toggle_count=self.toggle_count,
@@ -350,12 +378,12 @@ class TidyDataFrame:
 
     def unionAll(self, other):
         return self.union(other=other)
-    
-    def unionByName(self, other, allowMissingColumns = False):
-        result = self.data.unionByName(other=other, allowMissingColumns=allowMissingColumns)
-        self._log_operation(
-            operation="union", message="...by name"
+
+    def unionByName(self, other, allowMissingColumns=False):
+        result = self.data.unionByName(
+            other=other, allowMissingColumns=allowMissingColumns
         )
+        self._log_operation(operation="union", message="...by name")
         return TidyDataFrame(
             result,
             toggle_count=self.toggle_count,
