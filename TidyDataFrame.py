@@ -51,7 +51,6 @@ class TidyDataFrame:
         return self
 
     def _tdf_controller(
-        count_operation: bool = False,
         message: str = "count toggled off",
         alias: str = None,
     ):
@@ -149,8 +148,7 @@ class TidyDataFrame:
 
     ### FILTERING OPERATIONS
     @_tdf_controller(
-        message="removed {self.count() - self.count(result):,} rows, {self.count():,} remaining",
-        count_operation=True,
+        message="removed {self.count() - self.count(result):,} rows, {self.count():,} remaining"
     )
     def filter(self, condition):
         self._data = self._data.filter(condition)
