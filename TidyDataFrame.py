@@ -107,7 +107,7 @@ class TidyDataFrame:
         to toggling the `.count()` method, users can temporarily disable a DataFrame's
         ability to display to the console by passing `toggle_display = True`.
         """
-        if not self.toggle_display:
+        if not self.toggle_options.get("display"):
             self._log_operation(
                 operation="display", message="feature toggled off", level="warning"
             )
