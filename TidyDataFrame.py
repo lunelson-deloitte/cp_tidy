@@ -32,6 +32,8 @@ class TidyDataFrame:
 
 
     def __attrs_post_init__(self):
+        self._n_rows = self.count()
+        self._n_cols = len(self._data.columns)
         self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__))
 
     def __repr__(self, data_type: str):
@@ -50,13 +52,7 @@ class TidyDataFrame:
         level: str = "info",
     ):
         """Simple logger invoked by decorated methods."""
-        logger_func = getattr(logger, level)
-        logger_func(f"#> {operation}: {message}")
-
-    @property
-    def columns(self):
-        """Return all column names as a list"""
-        return self.data.columns
+        getattr(logger, level)(f"#> {operation}: {message}")
 
     @property
     def data(self):
@@ -64,14 +60,19 @@ class TidyDataFrame:
         return self._data
 
     @property
+    def columns(self):
+        """Return all column names as a list"""
+        return self._data.columns
+
+    @property
     def dtypes(self):
         """Return all column names and data types as a list"""
-        return self.data.dtypes
+        return self._data.dtypes
 
     @property
     def describe(self, *cols):
         """Compute basic statistics for numeric and string columns."""
-        return self.data.describe(*cols)
+        return self._data.describe(*cols)
     
     @property
     def _unknown_dimension():
@@ -90,10 +91,10 @@ class TidyDataFrame:
         """
         if not self.toggle_display:
             self._log_operation(
-                operation="display", message="feature toggled off", level="WARNING"
+                operation="display", message="feature toggled off", level="warning"
             )
         else:
-            self.data.display()
+            self._data.display()
 
     def count(self, result: pyspark.sql.DataFrame = None):
         """
@@ -106,11 +107,11 @@ class TidyDataFrame:
         invoke the `.count()` method.
 
         Depending on the nature of the request, the `.count()` method may not need to be invoked.
-        This is controlled by the state of the `n_rows` attribute and `result` parameter. The first
-        time `TidyDataFrame.count` is called, `n_rows` will be `None` - hence, a count will need
+        This is controlled by the state of the `_n_rows` attribute and `result` parameter. The first
+        time `TidyDataFrame.count` is called, `_n_rows` will be `None` - hence, a count will need
         to be computed. If a `result` is passed, this implies that the underlying `data` has
-        changed, meaning `n_rows` is no longer accurate and `count` will need to be computed. If
-        `n_rows` is initialized (not `None`) and no change in `data` is detected, then `n_rows` is
+        changed, meaning `_n_rows` is no longer accurate and `count` will need to be computed. If
+        `_n_rows` is initialized (not `None`) and no change in `data` is detected, then `_n_rows` is
         simply retrieved and returned without the need for computing row count.
 
         Additionally, a handler layers the function to bypass retrieving the count. This can be
@@ -118,13 +119,13 @@ class TidyDataFrame:
         parameter. (Contributed by Lida Zhang)
         """
         if not self.toggle_count:
-            self.n_rows = self._unknown_dimension
+            self._n_rows = self._unknown_dimension
         else:
-            if self.n_rows is None:  # not yet defined, compute row count
-                self.n_rows = self.data.count()
+            if self._n_rows is None:  # not yet defined, compute row count
+                self._n_rows = self.data.count()
             if result is not None:  # result computed, recompute row count
-                self.n_rows = result.count()
-            return self.n_rows  # defined and no new result, return row count
+                self._n_rows = result.count()
+            return self._n_rows  # defined and no new result, return row count
 
     def select(self, *cols, _deprecated=True):
         """Select columns from DataFrame"""
