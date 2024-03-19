@@ -1,26 +1,11 @@
-from attrs import define, field, validators
-from warnings import warn
-
 import functools
 import itertools
 
-import pyspark
-import pyspark.sql.functions as F
-
+from attrs import define, field, validators
 from loguru import logger
 
-### grouping operations
-#   + customized, user inclinced to use .display() after
-#       + e.g. select
-#   + not-so-customized, user not so inclined to use .display() after
-#       + e.g. filter
-### testing
-#   + see what engagements are doing; include functions in TidyDataFrame
-#       + package common operations in class
-### (future) resources
-#   + different notebooks for pyspark.sql.DataFrame and TidyDataFrame
-#       + demo for value add
-#   + comparison of "typical/daily" workflow and proposed workflow
+import pyspark
+import pyspark.sql.functions as F
 
 
 @define
@@ -33,53 +18,60 @@ class TidyDataFrame:
     _n_cols: int = field(default=None)
 
     def __attrs_post_init__(self):
-        # coerce toggle_options to default
-        self.toggle_options.setdefault('count', True)
-        self.toggle_options.setdefault('display', True)
-        # update dimensions (optionally, row count)
-        self._n_rows = self._data.count() if self.toggle_options.get('count') else self._unknown_dimension
+        self.toggle_options.setdefault("count", True)
+        self.toggle_options.setdefault("display", True)
+        self._n_rows = (
+            self._data.count()
+            if self.toggle_options.get("count")
+            else self._unknown_dimension
+        )
         self._n_cols = len(self._data.columns)
-        # output TidyDataFrame repr to console
         self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__))
 
     def __repr__(self, data_type: str):
         """String representation of TidyDataFrame"""
-        n_rows_repr = f"{self._n_rows:,}" if isinstance(self._n_rows, int) else self._n_rows
+        n_rows_repr = (
+            f"{self._n_rows:,}" if isinstance(self._n_rows, int) else self._n_rows
+        )
         data_repr = f"{data_type}[{n_rows_repr} rows x {self._n_cols:,} cols]"
         disabled_options_string = ""
         if data_type == "TidyDataFrame":
             disabled_options = itertools.compress(
                 self.toggle_options.keys(),
-                map(lambda x: not x, self.toggle_options.values())
+                map(lambda x: not x, self.toggle_options.values()),
             )
-            options_string = ', '.join(disabled_options)
-            disabled_options_string = f"(disabled: {options_string})" if options_string != "" else options_string
+            options_string = ", ".join(disabled_options)
+            disabled_options_string = (
+                f"(disabled: {options_string})" if options_string != "" else ""
+            )
         return f"{data_repr} {disabled_options_string}"
 
-    def _log_operation(self, operation, message, level='info'):
+    def _log_operation(self, operation, message, level="info"):
         getattr(logger, level)(f"#> {operation}: {message}")
 
-    def _tdf_controller(message: str = "count toggled off", count: bool = True):
-        """Method controlling order of operations within decorator context
-
-        Each pyspark.sql.DataFrame method is decorated with this function to
-        "control" how a method is decorated. Depending on the function's
-        signature, certain procedures will be performed, altering how the
-        logging message is formatted.
-        """
+    def _tdf_controller(
+        count_operation: bool = False,
+        message: str = "count toggled off",
+        alias: str = None,
+    ):
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
                 if hasattr(self, func.__name__):
                     result = func(self, *args, **kwargs)
-                    self._log_operation(operation=func.__name__, message=message)
+                    self._n_cols = len(result._data.columns)
+                    self._log_operation(
+                        operation=func.__name__ if alias is None else alias,
+                        message=eval(
+                            f"f'{message}'"
+                        ),  # need to evalue template within f-string; consider Jinja2?
+                    )
                     return result
             return wrapper
         return decorator
 
     @property
     def data(self):
-        """Return data, logging for user that result is no longer a TidyDataFrame"""
         self._log_operation(
             "<< exit <<", self.__repr__(data_type=type(self._data).__name__)
         )
@@ -144,239 +136,124 @@ class TidyDataFrame:
         controlled by the user when initializing a TidyDataFrame by passing the `toggle_count`
         parameter. (Contributed by Lida Zhang)
         """
-        if not self.toggle_options.get('count'):
+        if not self.toggle_options.get("count"):
             self._n_rows = self._unknown_dimension
+            return 0
         else:
-            if self._n_rows is None:  # not yet defined, compute row count
+            if self._n_rows == self._unknown_dimension:  # not defined, compute
                 self._n_rows = self._data.count()
             if result is not None:  # result computed, recompute row count
-                self._n_rows = result.count()
+                self._n_rows = result._data.count()
             return self._n_rows  # defined and no new result, return row count
 
-    def select(self, *cols, _deprecated=True):
-        """Select columns from DataFrame"""
-        if not _deprecated:
-            cols_pre = self.data.columns
-            result = self.data.select(*cols)
-            cols_post = result.columns
-
-            def get_message(pre: list[str], post: list[str]) -> str:
-                n_pre = len(pre)
-                n_post = len(post)
-                if n_pre == n_post:
-                    return "no columns dropped"
-                if n_post == 0:
-                    return "all columns dropped"
-                return (
-                    f"selected {n_post:,} column(s) ({self._format_message(set(post))})"
-                )
-
-            self._log_operation(
-                operation="select", message=get_message(pre=cols_pre, post=cols_post)
-            )
-            return TidyDataFrame(
-                result,
-                toggle_count=self.toggle_count,
-                toggle_display=self.toggle_display,
-                n_rows=self.n_rows,
-            )
-
-    @_tdf_controller(message="removed {self.count()} rows, {self.count(result)} remaining", count=True)
+    ### FILTERING OPERATIONS
+    @_tdf_controller(
+        message="removed {self.count() - self.count(result):,} rows, {self.count():,} remaining",
+        count_operation=True,
+    )
     def filter(self, condition):
-        """Filter observations from DataFrame based on condition"""
         self._data = self._data.filter(condition)
         return self
 
     def where(self, condition):
-        """Alias for `filter`"""
         return self.filter(condition)
 
+    @_tdf_controller(
+        message="removed {self.count() - self.count(result):,} duplicates",
+        # alias="filter_dups"
+    )
+    def drop_duplicates(self, subset=None):
+        self._data = self._data.drop_duplicates(subset=subset)
+        return self
+
+    def dropDuplicates(self, subset=None):
+        return self.drop_duplicates(subset=subset)
+
+    @_tdf_controller(
+        message="removed {self.count() - self.count(result):,} NAs",
+        # alias="filter_na"
+    )
+    def dropna(self, how="any", thresh=None, subset=None):
+        self._data = self._data.dropna(how=how, thresh=thresh, subset=subset)
+        return self
+
+    @_tdf_controller(
+        message="removed {self.count() - self.count(result):,} duplicate rows"
+    )
+    def distinct(self):
+        self._data = self._data.distinct()
+        return self
+
+    ### COLUMN SELECTING OPERATIONS
+    @_tdf_controller(message="selected {self._n_cols} columns")
+    def select(self, *cols):
+        self._data = self._data.select(*cols)
+        return self
+
     def drop(self, cols):
-        """Drop columns from DataFrame (using `.select()`)"""
-        all_cols = self.data.columns
+        all_cols = self._data.columns
         drop_cols = set(all_cols).difference(set(cols))
         return self.select(*drop_cols)
 
-    def withColumn(self, colName, col):
-        # needed to prevent masking of `col` function by `col` parameter
-        import pyspark.sql.functions as f
-
-        n_rows = self.count()
-        n_null_before = -1
-        if colName in self.data.columns:
-            n_null_before = (
-                self.data.select(colName).filter(f.col(colName).isNull()).count()
-                if self.toggle_count
-                else None
-            )
-        result = self.data.withColumn(colName=colName, col=col)
-        n_null_after = (
-            result.select(colName).filter(f.col(colName).isNull()).count()
-            if self.toggle_count
-            else None
-        )
-        col_info = filterfalse(lambda t: t[0] != colName, result.dtypes)
-
-        def get_message(
-            total: int,
-            invalid_before: int = -1,
-            invalid_after: int = 0,
-            col_info: tuple[str] = tuple(),
-        ):
-            col_name, col_type = col_info
-            if not self.toggle_count:
-                qualification = "no count performed"
-            else:
-
-                def n_invalid(n, total=total, when="before"):
-                    if n == -1:
-                        return ""
-                    return f"({when}) {n:,} ({(n)/total:.2%}) values are NULL"
-
-                qualification = f"{n_invalid(invalid_before)}{'' if invalid_before == -1 else ', '}{n_invalid(invalid_after, when='after')}"
-            return f"created '{col_name}' ({col_type}): {qualification}"
-
-        self._log_operation(
-            operation="mutate",
-            message=get_message(
-                total=n_rows,
-                invalid_before=n_null_before,
-                invalid_after=n_null_after,
-                col_info=tuple(col_info)[0],  # yield, unnest
-            ),
-        )
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
-
-    def withColumns(self, *colsMap):
-        result = self.data.withColumns(*colsMap)
-        self._log_operation(operation="mutate", message=f"message not yet created")
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
-
-    def withColumnRenamed(self, existing: str, new: str):
-        result = self.data.withColumnRenamed(existing=existing, new=new)
-        self._log_operation(
-            operation="rename", message=f"column '{existing}' renamed to '{new}'"
-        )
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
-
-    def join(self, other, on=None, how="inner"):
-        n_rows_self = self.count()
-        n_rows_other = other.count()
-        result = self.data.join(other=other, on=on, how=how)
-        n_rows_joined = self.count(result)
-
-        def get_message(
-            how: str, n_rows_left: int, n_rows_right: int, n_rows_joined: int
-        ):
-            if not self.toggle_count:
-                return "count not performed"
-            # assert statement vary by join type
-            return f"({how}) matched {n_rows_joined:,} ({n_rows_joined / n_rows_left:.2%}) rows"
-
-        self._log_operation(
-            operation=f"join",
-            message=get_message(
-                how=how,
-                n_rows_left=n_rows_self,
-                n_rows_right=n_rows_other,
-                n_rows_joined=n_rows_joined,
-            ),
-        )
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
-
-    def drop_duplicates(self, subset=None):
-        """Drop duplicates (based on subset) from DataFrame"""
-        n_rows_pre = self.count()
-        result = self.data.drop_duplicates(subset=subset)
-        n_rows_post = self.count(result)
-
-        def get_message(pre: int, post: int):
-            if not self.toggle_count:
-                return "count not performed"
-            return f"removed {pre - post:,} ({(pre - post) / pre:.2%}) duplicates"
-
-        self._log_operation(
-            operation="distinct", message=get_message(pre=n_rows_pre, post=n_rows_post)
-        )
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
-
-    def dropDuplicates(self, subset=None):
-        """Alias for `drop_duplicates`"""
-        return self.drop_duplicates(subset=subset)
-
-    def dropna(self, how="any", thresh=None, subset=None):
-        """Return DataFrame omitting rows with null values"""
-        return self.data.dropna(how=how, thresh=thresh, subset=subset)
-
-    def distinct(self):
-        n_rows_pre = self.count()
-        result = self.data.distinct()
-        n_rows_post = self.count(result)
-
-        def get_message(pre: int, post: int):
-            if not self.toggle_count:
-                return "count not performed"
-            return f"preserved {post:,} ({(pre - post) / pre:.2%}) rows"
-
-        self._log_operation(
-            operation="distinct", message=get_message(pre=n_rows_pre, post=n_rows_post)
-        )
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
-
+    ### JOIN OPERATIONS
+    @_tdf_controller(message="appended {self.count(result):,} rows")
     def union(self, other):
-        result = self.data.union(other)
-        self._log_operation(operation="union", message="...original")
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
+        self._data = self._data.union(other)
+        return self
 
     def unionAll(self, other):
-        return self.union(other=other)
+        return self.union(other)
 
+    @_tdf_controller(
+        message="appended {(self.count() - self.count(result)) * -1:,} rows"
+    )
     def unionByName(self, other, allowMissingColumns=False):
-        result = self.data.unionByName(
-            other=other, allowMissingColumns=allowMissingColumns
+        self._data = self._data.unionByName(
+            other, allowMissingColumns=allowMissingColumns
         )
-        self._log_operation(operation="union", message="...by name")
-        return TidyDataFrame(
-            result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=self.n_rows,
-        )
+        return self
 
-    def __getattr__(self, name):
-        return getattr(self.data, name)
+    @_tdf_controller(
+        message="matched {(self.count() - self.count(result)) * -1:,} rows"
+    )
+    def join(self, other, on=None, how="inner"):
+        self._data = self._data.join(other=other, on=on, how=how)
+        return self
+
+    ### COLUMN EDITING OPERATIONS
+    @_tdf_controller(
+        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)',
+        alias="mutate",
+    )
+    def withColumn(self, colName, col):
+        self._data = self._data.withColumn(colName=colName, col=col)
+        return self
+
+    @_tdf_controller(
+        message='column `{args[0] if args else kwargs.get("existing")}` renamed to `{args[1] if args else kwargs.get("new")}`',
+        alias="rename",
+    )
+    def withColumnRenamed(self, existing, new):
+        self._data = self._data.withColumnRenamed(existing=existing, new=new)
+        return self
+
+    ### CATCH ALL OPERATION
+    def __getattr__(self, attr):
+        if hasattr(self._data, attr):
+            def wrapper(*args, **kwargs):
+                result = getattr(self._data, attr)(*args, **kwargs)
+                if isinstance(result, pyspark.sql.DataFrame):
+                    self._data = result
+                    self._log_operation(
+                        operation=attr, message="not yet implemented", level="warning"
+                    )
+                    return self
+                else:
+                    return self
+            return wrapper
+        ### TODO: validate if this logging operation is legit
+        ### TODO: mark as unstable (sometimes get notebook dependencies caught in this; generates long message)
+        # self._log_operation(operation=attr, message="method does not exist", level="error")
+        raise AttributeError(
+            f"'{type(self._data).__name__}' object has no attribute '{attr}'"
+        )
