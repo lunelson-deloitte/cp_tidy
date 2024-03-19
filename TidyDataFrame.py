@@ -24,11 +24,7 @@ from loguru import logger
 @define
 class TidyDataFrame:
     _data: pyspark.sql.DataFrame = field(validator=validators.instance_of(pyspark.sql.DataFrame))
-    # toggle_options: dict[str, bool] = field(default=dict(count=True, display=True))
-    toggle_count: bool = field(default=True, validator=validators.instance_of(bool))
-    toggle_display: bool = field(default=True, validator=validators.instance_of(bool))
-    toggle_timer: bool = field(default=True, validator=validators.instance_of(bool))
-    toggle_message: bool = field(default=True, validator=validators.instance_of(bool))
+    toggle_options: dict[str, bool] = field(default=dict(count=True, display=True))
     _n_rows: int = field(default=-1, validator=validators.instance_of(int))
     _n_cols: int = field(default=-1, validator=validators.instance_of(int))
 
@@ -45,9 +41,9 @@ class TidyDataFrame:
             # count_repr = None if self.toggle_count else "count"
             # display_repr = None if self.toggle_display else "display"
             # toggle_repr = filter(lambda t: t is not None, [count_repr, display_repr])
-            toggle_repr = ["count", "display"]
-            toggled_options = f"(disabled: {', '.join(toggle_repr)})"
-        return f"{data_repr} {toggled_options}" # {', '.join(toggle_repr)})"
+            disabled_options = filter(lambda key: not self.toggle_options.get(key), self.toggle_options)
+            disabled_options_string = f"(disabled: {', '.join(disabled_options)})"
+        return f"{data_repr} {disabled_options_string}"
 
     def _log_operation(
         self,
