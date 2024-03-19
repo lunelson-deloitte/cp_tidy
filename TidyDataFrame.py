@@ -1,6 +1,8 @@
 from attrs import define, field, validators
 from warnings import warn
-from itertools import filterfalse
+
+import functools
+import itertools
 
 import pyspark
 import pyspark.sql.functions as F
@@ -30,29 +32,25 @@ class TidyDataFrame:
 
 
     def __attrs_post_init__(self):
-        self._log_operation("<< enter >>", self.__repr__(data_type=type(self).__name__))
+        self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__))
 
-    def __repr__(self, data_type):
+    def __repr__(self, data_type: str):
         """String representation of TidyDataFrame"""
         data_repr = f"{data_type}[{self.n_rows:,} rows x {self.n_cols:,} cols]"
-        toggled_options = ""
+        disabled_options_string = ""
         if data_type == 'TidyDataFrame':
-            pass
-            # count_repr = None if self.toggle_count else "count"
-            # display_repr = None if self.toggle_display else "display"
-            # toggle_repr = filter(lambda t: t is not None, [count_repr, display_repr])
-            disabled_options = filter(lambda key: not self.toggle_options.get(key), self.toggle_options)
+            disabled_options = itertools.compress(self.toggle_options.keys(), self.toggle_options.values())
             disabled_options_string = f"(disabled: {', '.join(disabled_options)})"
         return f"{data_repr} {disabled_options_string}"
 
     def _log_operation(
         self,
-        operation="custom",
-        message="method not covered by TidyDataFrame",
-        level="INFO",
+        operation: str,
+        message: str,
+        level: str = "info",
     ):
         """Simple logger invoked by decorated methods."""
-        logger_func = getattr(logger, level.strip().lower())
+        logger_func = getattr(logger, level)
         logger_func(f"#> {operation}: {message}")
 
     @property
@@ -62,8 +60,8 @@ class TidyDataFrame:
 
     @property
     def data(self):
-        self._log_operation("< exit >")
-        return self.data
+        self._log_operation("<< exit <<", self.__repr__(data_type=type(self._data).__name__))
+        return self._data
 
     @property
     def dtypes(self):
