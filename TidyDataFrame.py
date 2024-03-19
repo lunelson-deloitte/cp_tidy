@@ -48,6 +48,7 @@ class TidyDataFrame:
 
     def _log_operation(self, operation, message, level="info"):
         getattr(logger, level)(f"#> {operation}: {message}")
+        return self
 
     def _tdf_controller(
         count_operation: bool = False,
