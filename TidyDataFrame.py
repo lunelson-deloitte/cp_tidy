@@ -25,11 +25,12 @@ from loguru import logger
 
 @define
 class TidyDataFrame:
-    _data: pyspark.sql.DataFrame = field(validator=validators.instance_of(pyspark.sql.DataFrame))
+    _data: pyspark.sql.DataFrame = field(
+        validator=validators.instance_of(pyspark.sql.DataFrame)
+    )
     toggle_options: dict[str, bool] = field(default=dict(count=True, display=True))
     _n_rows: int = field(default=-1, validator=validators.instance_of(int))
     _n_cols: int = field(default=-1, validator=validators.instance_of(int))
-
 
     def __attrs_post_init__(self):
         self._n_rows = self.count()
@@ -40,8 +41,10 @@ class TidyDataFrame:
         """String representation of TidyDataFrame"""
         data_repr = f"{data_type}[{self.n_rows:,} rows x {self.n_cols:,} cols]"
         disabled_options_string = ""
-        if data_type == 'TidyDataFrame':
-            disabled_options = itertools.compress(self.toggle_options.keys(), self.toggle_options.values())
+        if data_type == "TidyDataFrame":
+            disabled_options = itertools.compress(
+                self.toggle_options.keys(), self.toggle_options.values()
+            )
             disabled_options_string = f"(disabled: {', '.join(disabled_options)})"
         return f"{data_repr} {disabled_options_string}"
 
@@ -54,9 +57,33 @@ class TidyDataFrame:
         """Simple logger invoked by decorated methods."""
         getattr(logger, level)(f"#> {operation}: {message}")
 
+    def _tdf_controller(message: str = "count toggled off", count: bool = True):
+        """Method controlling order of operations within decorator context
+
+        Each pyspark.sql.DataFrame method is decorated with this function to
+        "control" how a method is decorated. Depending on the function's
+        signature, certain procedures will be performed, altering how the
+        logging message is formatted.
+        """
+
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                if hasattr(self, func.__name__):
+                    result = func(self, *args, **kwargs)
+                    self._log_operation(operation=func.__name__, message=message)
+                    return result
+
+            return wrapper
+
+        return decorator
+
     @property
     def data(self):
-        self._log_operation("<< exit <<", self.__repr__(data_type=type(self._data).__name__))
+        """Return data, logging for user that result is no longer a TidyDataFrame"""
+        self._log_operation(
+            "<< exit <<", self.__repr__(data_type=type(self._data).__name__)
+        )
         return self._data
 
     @property
@@ -73,9 +100,9 @@ class TidyDataFrame:
     def describe(self, *cols):
         """Compute basic statistics for numeric and string columns."""
         return self._data.describe(*cols)
-    
+
     @property
-    def _unknown_dimension():
+    def _unknown_dimension(self):
         return "???"
 
     def display(self):
