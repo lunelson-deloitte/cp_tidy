@@ -28,33 +28,35 @@ class TidyDataFrame:
     _data: pyspark.sql.DataFrame = field(
         validator=validators.instance_of(pyspark.sql.DataFrame)
     )
-    toggle_options: dict[str, bool] = field(default=dict(count=True, display=True))
-    _n_rows: int = field(default=-1, validator=validators.instance_of(int))
-    _n_cols: int = field(default=-1, validator=validators.instance_of(int))
+    toggle_options: dict[str, bool] = field(factory=dict)
+    _n_rows: int = field(default=None)
+    _n_cols: int = field(default=None)
 
     def __attrs_post_init__(self):
-        self._n_rows = self.count()
+        # coerce toggle_options to default
+        self.toggle_options.setdefault('count', True)
+        self.toggle_options.setdefault('display', True)
+        # update dimensions (optionally, row count)
+        self._n_rows = self._data.count() if self.toggle_options.get('count') else self._unknown_dimension
         self._n_cols = len(self._data.columns)
+        # output TidyDataFrame repr to console
         self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__))
 
     def __repr__(self, data_type: str):
         """String representation of TidyDataFrame"""
-        data_repr = f"{data_type}[{self.n_rows:,} rows x {self.n_cols:,} cols]"
+        n_rows_repr = f"{self._n_rows:,}" if isinstance(self._n_rows, int) else self._n_rows
+        data_repr = f"{data_type}[{n_rows_repr} rows x {self._n_cols:,} cols]"
         disabled_options_string = ""
         if data_type == "TidyDataFrame":
             disabled_options = itertools.compress(
-                self.toggle_options.keys(), self.toggle_options.values()
+                self.toggle_options.keys(),
+                map(lambda x: not x, self.toggle_options.values())
             )
-            disabled_options_string = f"(disabled: {', '.join(disabled_options)})"
+            options_string = ', '.join(disabled_options)
+            disabled_options_string = f"(disabled: {options_string})" if options_string != "" else ""
         return f"{data_repr} {disabled_options_string}"
 
-    def _log_operation(
-        self,
-        operation: str,
-        message: str,
-        level: str = "info",
-    ):
-        """Simple logger invoked by decorated methods."""
+    def _log_operation(self, operation, message, level='info'):
         getattr(logger, level)(f"#> {operation}: {message}")
 
     def _tdf_controller(message: str = "count toggled off", count: bool = True):
@@ -70,8 +72,10 @@ class TidyDataFrame:
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
                 if hasattr(self, func.__name__):
+                    n_pre = self.count()
                     result = func(self, *args, **kwargs)
-                    self._log_operation(operation=func.__name__, message=message)
+                    n_post = self.count(result)
+                    self._log_operation(operation=func.__name__, message=message.format(n_pre=n_pre, n_post=n_post))
                     return result
 
             return wrapper
@@ -145,11 +149,11 @@ class TidyDataFrame:
         controlled by the user when initializing a TidyDataFrame by passing the `toggle_count`
         parameter. (Contributed by Lida Zhang)
         """
-        if not self.toggle_count:
+        if not self.toggle_options.get('count'):
             self._n_rows = self._unknown_dimension
         else:
             if self._n_rows is None:  # not yet defined, compute row count
-                self._n_rows = self.data.count()
+                self._n_rows = self._data.count()
             if result is not None:  # result computed, recompute row count
                 self._n_rows = result.count()
             return self._n_rows  # defined and no new result, return row count
@@ -182,8 +186,11 @@ class TidyDataFrame:
                 n_rows=self.n_rows,
             )
 
+    @_tdf_controller(message="removed {n_post} rows, {n_result} remaining", count=True)
     def filter(self, condition):
         """Filter observations from DataFrame based on condition"""
+        self._data = self._data.filter(condition)
+        return self
 
         n_rows_pre = self.count()
         result = self.data.filter(condition)
@@ -199,16 +206,6 @@ class TidyDataFrame:
                 return f"all rows removed, {post:,} remaining"
             diff = pre - post
             return f"contains {pre:,} rows, removed {diff:,} rows ({diff / pre:.2%}), {post:,} remaining"
-
-        self._log_operation(
-            operation="filter", message=get_message(pre=n_rows_pre, post=n_rows_post)
-        )
-        return TidyDataFrame(
-            data=result,
-            toggle_count=self.toggle_count,
-            toggle_display=self.toggle_display,
-            n_rows=n_rows_post,
-        )
 
     def where(self, condition):
         """Alias for `filter`"""
