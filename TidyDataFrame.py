@@ -222,7 +222,7 @@ class TidyDataFrame:
 
     ### COLUMN EDITING OPERATIONS
     @_tdf_controller(
-        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)',
+        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)', # update to "created" or "edited"?
         alias="mutate",
     )
     def withColumn(self, colName, col):
