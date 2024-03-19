@@ -1,17 +1,9 @@
-### VERSION     0.0.1
-### CREATED     February 22, 2024
-### MODIFIED    February 24, 2024
-### AUTHOR      Lucas Nelson
-### CONTRIBUTOR Anusha Venkata Jami, Phung Pham, Lida Zhang
-
-
-from typing import Iterable
 from attrs import define, field, validators
 from warnings import warn
 from itertools import filterfalse
 
 import pyspark
-from pyspark.sql.functions import lit, col
+import pyspark.sql.functions as F
 
 from loguru import logger
 
@@ -29,42 +21,33 @@ from loguru import logger
 #   + comparison of "typical/daily" workflow and proposed workflow
 
 
-class EmptyDataFrameWarning(UserWarning):
-    pass
-
-
-class NoRowsReturnedWarning(UserWarning):
-    pass
-
-
-class MethodNotFoundWarning(UserWarning):
-    pass
-
-
 @define
 class TidyDataFrame:
-    data: pyspark.sql.DataFrame = field(validator=validators.instance_of(pyspark.sql.DataFrame))
+    _data: pyspark.sql.DataFrame = field(validator=validators.instance_of(pyspark.sql.DataFrame))
+    # toggle_options: dict[str, bool] = field(default=dict(count=True, display=True))
     toggle_count: bool = field(default=True, validator=validators.instance_of(bool))
     toggle_display: bool = field(default=True, validator=validators.instance_of(bool))
     toggle_timer: bool = field(default=True, validator=validators.instance_of(bool))
     toggle_message: bool = field(default=True, validator=validators.instance_of(bool))
-    n_rows: int = field(default=None) # TODO: no need for default value
-    n_cols: int = field(default=-1)   # TODO: no need for default value
+    _n_rows: int = field(default=-1, validator=validators.instance_of(int))
+    _n_cols: int = field(default=-1, validator=validators.instance_of(int))
 
-    ### logger.add(message=...)
 
     def __attrs_post_init__(self):
-        """Define attributes after initializing a TidyDataFrame"""
-        self.n_rows = self.count()
-        self.n_cols = len(self.data.columns)
+        self._log_operation("<< enter >>", self.__repr__(data_type=type(self).__name__))
 
-    def __repr__(self):
+    def __repr__(self, data_type):
         """String representation of TidyDataFrame"""
-        data_repr = f"TidyDataFrame[{self.n_rows:,} rows x {self.n_cols:,} cols]"
-        count_repr = None if self.toggle_count else "count"
-        display_repr = None if self.toggle_display else "display"
-        toggle_repr = filter(lambda t: t is not None, [count_repr, display_repr])
-        return f"{data_repr} (disabled: {', '.join(toggle_repr)})"
+        data_repr = f"{data_type}[{self.n_rows:,} rows x {self.n_cols:,} cols]"
+        toggled_options = ""
+        if data_type == 'TidyDataFrame':
+            pass
+            # count_repr = None if self.toggle_count else "count"
+            # display_repr = None if self.toggle_display else "display"
+            # toggle_repr = filter(lambda t: t is not None, [count_repr, display_repr])
+            toggle_repr = ["count", "display"]
+            toggled_options = f"(disabled: {', '.join(toggle_repr)})"
+        return f"{data_repr} {toggled_options}" # {', '.join(toggle_repr)})"
 
     def _log_operation(
         self,
@@ -82,6 +65,11 @@ class TidyDataFrame:
         return self.data.columns
 
     @property
+    def data(self):
+        self._log_operation("< exit >")
+        return self.data
+
+    @property
     def dtypes(self):
         """Return all column names and data types as a list"""
         return self.data.dtypes
@@ -90,6 +78,10 @@ class TidyDataFrame:
     def describe(self, *cols):
         """Compute basic statistics for numeric and string columns."""
         return self.data.describe(*cols)
+    
+    @property
+    def _unknown_dimension():
+        return "???"
 
     def display(self):
         """
@@ -131,18 +123,14 @@ class TidyDataFrame:
         controlled by the user when initializing a TidyDataFrame by passing the `toggle_count`
         parameter. (Contributed by Lida Zhang)
         """
-        if self.toggle_count:
+        if not self.toggle_count:
+            self.n_rows = self._unknown_dimension
+        else:
             if self.n_rows is None:  # not yet defined, compute row count
                 self.n_rows = self.data.count()
-                print(self.__repr__()) # print out string representation (repr)
-                if self.n_rows == 0:
-                    warn("Provided data is empty", EmptyDataFrameWarning)
             if result is not None:  # result computed, recompute row count
                 self.n_rows = result.count()
-                if self.n_rows == 0:
-                    warn("Query returned no results", NoRowsReturnedWarning)
             return self.n_rows  # defined and no new result, return row count
-        return None
 
     def select(self, *cols, _deprecated=True):
         """Select columns from DataFrame"""
