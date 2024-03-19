@@ -47,6 +47,7 @@ class TidyDataFrame:
         return f"{data_repr} {disabled_options_string}"
 
     def _log_operation(self, operation, message, level="info"):
+        # consider alias for users; maybe .comment()?
         getattr(logger, level)(f"#> {operation}: {message}")
         return self
 
