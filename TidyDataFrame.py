@@ -53,7 +53,7 @@ class TidyDataFrame:
                 map(lambda x: not x, self.toggle_options.values())
             )
             options_string = ', '.join(disabled_options)
-            disabled_options_string = f"(disabled: {options_string})" if options_string != "" else ""
+            disabled_options_string = f"(disabled: {options_string})" if options_string != "" else options_string
         return f"{data_repr} {disabled_options_string}"
 
     def _log_operation(self, operation, message, level='info'):
@@ -67,19 +67,14 @@ class TidyDataFrame:
         signature, certain procedures will be performed, altering how the
         logging message is formatted.
         """
-
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
                 if hasattr(self, func.__name__):
-                    n_pre = self.count()
                     result = func(self, *args, **kwargs)
-                    n_post = self.count(result)
-                    self._log_operation(operation=func.__name__, message=message.format(n_pre=n_pre, n_post=n_post))
+                    self._log_operation(operation=func.__name__, message=message)
                     return result
-
             return wrapper
-
         return decorator
 
     @property
@@ -186,26 +181,11 @@ class TidyDataFrame:
                 n_rows=self.n_rows,
             )
 
-    @_tdf_controller(message="removed {n_post} rows, {n_result} remaining", count=True)
+    @_tdf_controller(message="removed {self.count()} rows, {self.count(result)} remaining", count=True)
     def filter(self, condition):
         """Filter observations from DataFrame based on condition"""
         self._data = self._data.filter(condition)
         return self
-
-        n_rows_pre = self.count()
-        result = self.data.filter(condition)
-        n_rows_post = self.count(result)
-
-        def get_message(pre: int, post: int):
-            if not self.toggle_count:
-                return f"count not performed"
-            assert post <= pre, "Unsure how filter returned more rows?"
-            if pre == post:
-                return f"no rows removed, {pre:,} remaining"
-            if post == 0:
-                return f"all rows removed, {post:,} remaining"
-            diff = pre - post
-            return f"contains {pre:,} rows, removed {diff:,} rows ({diff / pre:.2%}), {post:,} remaining"
 
     def where(self, condition):
         """Alias for `filter`"""
