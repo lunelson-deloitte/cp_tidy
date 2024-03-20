@@ -1,3 +1,4 @@
+import sys
 import functools
 import itertools
 
@@ -11,7 +12,7 @@ import pyspark.sql.functions as F
 @define
 class TidyDataFrame:
     """Decorator class enhancing data pipelines with in-process logging messages
-
+    
     The TidyDataFrame extends the native pyspark.sql.DataFrame (DataFrame) by
     giving users immediate feedback as their code executes. Depending on the
     nature of a command, users can observe how a method alters their DataFrame's
@@ -38,7 +39,7 @@ class TidyDataFrame:
             else self._unknown_dimension
         )
         self._n_cols = len(self._data.columns)
-        self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__))
+        self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__), level='success')
 
     def __repr__(self, data_type: str):
         """String representation of TidyDataFrame"""
@@ -46,46 +47,45 @@ class TidyDataFrame:
             f"{self._n_rows:,}" if isinstance(self._n_rows, int) else self._n_rows
         )
         data_repr = f"{data_type}[{n_rows_repr} rows x {self._n_cols:,} cols]"
-        disabled_options_string = ""
+        disabled_options_repr = ""
         if data_type == "TidyDataFrame":
             disabled_options = itertools.compress(
                 self.toggle_options.keys(),
                 map(lambda x: not x, self.toggle_options.values()),
             )
             options_string = ", ".join(disabled_options)
-            disabled_options_string = (
+            disabled_options_repr = (
                 f"(disabled: {options_string})" if options_string != "" else ""
             )
-        return f"{data_repr} {disabled_options_string}"
+        return f"{data_repr} {disabled_options_repr}"
 
     def _log_operation(self, operation, message, level="info"):
-        # TODO: consider alias for users; maybe .comment()?
+        # consider alias for users; maybe .comment()?
         getattr(logger, level)(f"#> {operation}: {message}")
         return self
 
-    def _tdf_controller(
-        message: str = "count toggled off",
-        alias: str = None,
-    ):
+    def _tdf_controller(message: str, alias: str = None):
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
                 if hasattr(self, func.__name__):
                     result = func(self, *args, **kwargs)
                     self._n_cols = len(result._data.columns)
-                    self._log_operation(
-                        operation=func.__name__ if alias is None else alias,
-                        message=eval(f"f'{message}'"),
-                    )
+                    if not kwargs.get("disable_message", False):
+                        self._log_operation(
+                            operation=func.__name__ if alias is None else alias,
+                            message=eval(
+                                f"f'{message}'"
+                            ),
+                        )
                     return result
             return wrapper
         return decorator
 
     @property
     def data(self):
-        """Return data as pyspark.sql.DataFrame"""
         self._log_operation(
-            "<< exit <<", self.__repr__(data_type=type(self._data).__name__)
+            "<< exit <<", self.__repr__(data_type=type(self._data).__name__), level='success'
         )
         return self._data
 
@@ -160,65 +160,65 @@ class TidyDataFrame:
 
     ### FILTERING OPERATIONS
     @_tdf_controller(
-        message="removed {self.count() - self.count(result):,} rows, returned {self.count():,} rows"
+        message="contains {self.count():,} rows, removed {self.count() - self.count(result):,} rows, remaining {self.count():,} rows"
     )
-    def filter(self, condition):
+    def filter(self, condition, disable_message: bool = False):
         self._data = self._data.filter(condition)
         return self
 
-    def where(self, condition):
+    def where(self, condition, disable_message: bool = False):
         return self.filter(condition)
 
     @_tdf_controller(
         message="removed {self.count() - self.count(result):,} duplicates",
         # alias="filter_dups"
     )
-    def drop_duplicates(self, subset=None):
+    def drop_duplicates(self, subset=None, disable_message: bool = False):
         self._data = self._data.drop_duplicates(subset=subset)
         return self
 
-    def dropDuplicates(self, subset=None):
+    def dropDuplicates(self, subset=None, disable_message: bool = False):
         return self.drop_duplicates(subset=subset)
 
     @_tdf_controller(
         message="removed {self.count() - self.count(result):,} NAs",
         # alias="filter_na"
     )
-    def dropna(self, how="any", thresh=None, subset=None):
+    def dropna(self, how="any", thresh=None, subset=None, disable_message: bool = False):
         self._data = self._data.dropna(how=how, thresh=thresh, subset=subset)
         return self
 
     @_tdf_controller(
         message="removed {self.count() - self.count(result):,} duplicate rows"
     )
-    def distinct(self):
+    def distinct(self, disable_message: bool = False):
         self._data = self._data.distinct()
         return self
 
     ### COLUMN SELECTING OPERATIONS
     @_tdf_controller(message="selected {self._n_cols} columns")
-    def select(self, *cols):
+    def select(self, *cols, disable_message: bool = False):
         self._data = self._data.select(*cols)
         return self
 
-    def drop(self, cols):
+    def drop(self, cols, disable_message: bool = False):
         all_cols = self._data.columns
         drop_cols = set(all_cols).difference(set(cols))
         return self.select(*drop_cols)
 
     ### JOIN OPERATIONS
     @_tdf_controller(message="appended {self.count(result):,} rows")
-    def union(self, other):
+    def union(self, other, disable_message: bool = False):
         self._data = self._data.union(other)
         return self
 
-    def unionAll(self, other):
+    def unionAll(self, other, disable_message: bool = False):
         return self.union(other)
 
     @_tdf_controller(
         message="appended {(self.count() - self.count(result)) * -1:,} rows"
     )
-    def unionByName(self, other, allowMissingColumns=False):
+    def unionByName(self, other, allowMissingColumns=False, disable_message: bool = False):
         self._data = self._data.unionByName(
             other, allowMissingColumns=allowMissingColumns
         )
@@ -227,24 +227,32 @@ class TidyDataFrame:
     @_tdf_controller(
         message="matched {(self.count() - self.count(result)) * -1:,} rows"
     )
-    def join(self, other, on=None, how="inner"):
+    def join(self, other, on=None, how="inner", disable_message: bool = False):
         self._data = self._data.join(other=other, on=on, how=how)
         return self
 
     ### COLUMN EDITING OPERATIONS
     @_tdf_controller(
-        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)',  # update to "created" or "edited"?
+        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)', # update to "created" or "edited"?
         alias="mutate",
     )
-    def withColumn(self, colName, col):
+    def withColumn(self, colName, col, disable_message: bool = False):
         self._data = self._data.withColumn(colName=colName, col=col)
+        return self
+    
+    @_tdf_controller(
+        message='creating multiple columns',
+        alias="rename",
+    )
+    def withColumns(self, *colsMap, disable_message: bool = False):
+        self._data = self._data.withColumns(*colsMap)
         return self
 
     @_tdf_controller(
         message='column `{args[0] if args else kwargs.get("existing")}` renamed to `{args[1] if args else kwargs.get("new")}`',
         alias="rename",
     )
-    def withColumnRenamed(self, existing, new):
+    def withColumnRenamed(self, existing, new, disable_message: bool = False):
         self._data = self._data.withColumnRenamed(existing=existing, new=new)
         return self
 
