@@ -10,6 +10,17 @@ import pyspark.sql.functions as F
 
 @define
 class TidyDataFrame:
+    """Decorator class enhancing data pipelines with in-process logging messages
+
+    The TidyDataFrame extends the native pyspark.sql.DataFrame (DataFrame) by
+    giving users immediate feedback as their code executes. Depending on the
+    nature of a command, users can observe how a method alters their DataFrame's
+    dimensions, schema, and more.
+
+    TidyDataFrame offers an array of helpful methods out of the box with minimal
+    changes to any existing code. Once wrapped around a DataFrame, it can "toggle"
+    many common options, such as counting, displaying, timing, messaging, and so on.
+    """
     _data: pyspark.sql.DataFrame = field(
         validator=validators.instance_of(pyspark.sql.DataFrame)
     )
@@ -18,6 +29,7 @@ class TidyDataFrame:
     _n_cols: int = field(default=None)
 
     def __attrs_post_init__(self):
+        """Coerce initialization to normalized state, with greeting message"""
         self.toggle_options.setdefault("count", True)
         self.toggle_options.setdefault("display", True)
         self._n_rows = (
@@ -47,7 +59,7 @@ class TidyDataFrame:
         return f"{data_repr} {disabled_options_string}"
 
     def _log_operation(self, operation, message, level="info"):
-        # consider alias for users; maybe .comment()?
+        # TODO: consider alias for users; maybe .comment()?
         getattr(logger, level)(f"#> {operation}: {message}")
         return self
 
@@ -63,9 +75,7 @@ class TidyDataFrame:
                     self._n_cols = len(result._data.columns)
                     self._log_operation(
                         operation=func.__name__ if alias is None else alias,
-                        message=eval(
-                            f"f'{message}'"
-                        ),  # need to evalue template within f-string; consider Jinja2?
+                        message=eval(f"f'{message}'"),
                     )
                     return result
             return wrapper
@@ -73,6 +83,7 @@ class TidyDataFrame:
 
     @property
     def data(self):
+        """Return data as pyspark.sql.DataFrame"""
         self._log_operation(
             "<< exit <<", self.__repr__(data_type=type(self._data).__name__)
         )
@@ -222,7 +233,7 @@ class TidyDataFrame:
 
     ### COLUMN EDITING OPERATIONS
     @_tdf_controller(
-        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)', # update to "created" or "edited"?
+        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)',  # update to "created" or "edited"?
         alias="mutate",
     )
     def withColumn(self, colName, col):
