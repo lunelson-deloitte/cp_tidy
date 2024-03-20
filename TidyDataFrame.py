@@ -1,4 +1,3 @@
-import sys
 import functools
 import itertools
 
@@ -6,13 +5,12 @@ from attrs import define, field, validators
 from loguru import logger
 
 import pyspark
-import pyspark.sql.functions as F
 
 
 @define
 class TidyDataFrame:
     """Decorator class enhancing data pipelines with in-process logging messages
-    
+
     The TidyDataFrame extends the native pyspark.sql.DataFrame (DataFrame) by
     giving users immediate feedback as their code executes. Depending on the
     nature of a command, users can observe how a method alters their DataFrame's
@@ -22,6 +20,7 @@ class TidyDataFrame:
     changes to any existing code. Once wrapped around a DataFrame, it can "toggle"
     many common options, such as counting, displaying, timing, messaging, and so on.
     """
+
     _data: pyspark.sql.DataFrame = field(
         validator=validators.instance_of(pyspark.sql.DataFrame)
     )
@@ -39,7 +38,9 @@ class TidyDataFrame:
             else self._unknown_dimension
         )
         self._n_cols = len(self._data.columns)
-        self._log_operation(">> enter >>", self.__repr__(data_type=type(self).__name__), level='success')
+        self._log_operation(
+            ">> enter >>", self.__repr__(data_type=type(self).__name__), level="success"
+        )
 
     def __repr__(self, data_type: str):
         """String representation of TidyDataFrame"""
@@ -74,18 +75,20 @@ class TidyDataFrame:
                     if not kwargs.get("disable_message", False):
                         self._log_operation(
                             operation=func.__name__ if alias is None else alias,
-                            message=eval(
-                                f"f'{message}'"
-                            ),
+                            message=eval(f"f'{message}'"),
                         )
                     return result
+
             return wrapper
+
         return decorator
 
     @property
     def data(self):
         self._log_operation(
-            "<< exit <<", self.__repr__(data_type=type(self._data).__name__), level='success'
+            "<< exit <<",
+            self.__repr__(data_type=type(self._data).__name__),
+            level="success",
         )
         return self._data
 
@@ -184,7 +187,9 @@ class TidyDataFrame:
         message="removed {self.count() - self.count(result):,} NAs",
         # alias="filter_na"
     )
-    def dropna(self, how="any", thresh=None, subset=None, disable_message: bool = False):
+    def dropna(
+        self, how="any", thresh=None, subset=None, disable_message: bool = False
+    ):
         self._data = self._data.dropna(how=how, thresh=thresh, subset=subset)
         return self
 
@@ -218,7 +223,9 @@ class TidyDataFrame:
     @_tdf_controller(
         message="appended {(self.count() - self.count(result)) * -1:,} rows"
     )
-    def unionByName(self, other, allowMissingColumns=False, disable_message: bool = False):
+    def unionByName(
+        self, other, allowMissingColumns=False, disable_message: bool = False
+    ):
         self._data = self._data.unionByName(
             other, allowMissingColumns=allowMissingColumns
         )
@@ -233,15 +240,15 @@ class TidyDataFrame:
 
     ### COLUMN EDITING OPERATIONS
     @_tdf_controller(
-        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)', # update to "created" or "edited"?
+        message='created `{args[0] if args else kwargs.get("colName")}` (< type >)',  # update to "created" or "edited"?
         alias="mutate",
     )
     def withColumn(self, colName, col, disable_message: bool = False):
         self._data = self._data.withColumn(colName=colName, col=col)
         return self
-    
+
     @_tdf_controller(
-        message='creating multiple columns',
+        message="creating multiple columns",
         alias="rename",
     )
     def withColumns(self, *colsMap, disable_message: bool = False):
@@ -259,6 +266,7 @@ class TidyDataFrame:
     ### CATCH ALL OPERATION
     def __getattr__(self, attr):
         if hasattr(self._data, attr):
+
             def wrapper(*args, **kwargs):
                 result = getattr(self._data, attr)(*args, **kwargs)
                 if isinstance(result, pyspark.sql.DataFrame):
@@ -269,6 +277,7 @@ class TidyDataFrame:
                     return self
                 else:
                     return self
+
             return wrapper
         ### TODO: validate if this logging operation is legit
         ### TODO: mark as unstable (sometimes get notebook dependencies caught in this; generates long message)
