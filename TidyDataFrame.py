@@ -160,7 +160,7 @@ class TidyDataFrame:
 
     ### FILTERING OPERATIONS
     @_tdf_controller(
-        message="removed {self.count() - self.count(result):,} rows, {self.count():,} remaining"
+        message="removed {self.count() - self.count(result):,} rows, returned {self.count():,} rows"
     )
     def filter(self, condition):
         self._data = self._data.filter(condition)
