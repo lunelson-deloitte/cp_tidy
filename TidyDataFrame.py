@@ -5,6 +5,7 @@ from attrs import define, field, validators
 from loguru import logger
 
 import pyspark
+import pyspark.sql.functions as F
 
 
 @define
@@ -173,6 +174,7 @@ class TidyDataFrame:
             )
         else:
             self._data.display()
+        return self
 
     def count(self, result: pyspark.sql.DataFrame = None):
         """
@@ -284,7 +286,7 @@ class TidyDataFrame:
         return self
 
     ### COLUMN EDITING OPERATIONS
-    @_tdf_controller(
+    @_tdf_controller(  # use of single apostrophes is intentional
         message='created `{args[0] if args else kwargs.get("colName")}` (< type >)',  # update to "created" or "edited"?
         alias="mutate",
     )
@@ -300,12 +302,66 @@ class TidyDataFrame:
         self._data = self._data.withColumns(*colsMap)
         return self
 
-    @_tdf_controller(
+    @_tdf_controller(  # use of single apostrophes is intentional
         message='column `{args[0] if args else kwargs.get("existing")}` renamed to `{args[1] if args else kwargs.get("new")}`',
         alias="rename",
     )
     def withColumnRenamed(self, existing, new, disable_message: bool = False):
         self._data = self._data.withColumnRenamed(existing=existing, new=new)
+        return self
+
+    ### TidyDataFrame methods
+    @_tdf_controller(
+        message='cast {args[0] if args else kwargs.get("columns")} to {args[1] if args else kwargs.get("dtype")}'
+    )
+    def tdf_cast(self, columns: list[str], dtype):
+        # > accept dictionary {col:dtype, ...}
+        # > accept two parameters columns=list[str], dtypes=list[pyspark.types]
+        dtype = dtype.strip().lower()
+        # self._validate_dtype(dtype=dtype, category='all')
+        if dtype == "string":
+            self._data = self.tdf_cast_string(columns=columns)
+        if dtype == "decimal":
+            self._data = self.tdf_cast_numeric(columns=columns)
+        if dtype == "date":
+            self._data = self.tdf_cast_date(columns=columns)
+        return self
+
+    def tdf_cast_string(self, columns: list[str], dtype="string"):
+        self._validate_dtype(dtype=dtype, category="all")
+        self._data = self._data.withColumns(
+            {key: F.col(key).cast(dtype) for key in columns}
+        )
+        return self
+
+    def tdf_cast_numeric(self, columns: list[str], dtype="decimal"):
+        RE_VALUES = "([\(-\d\.]+)"
+        # NUMERIC_DTYPES = ['decimal', 'integer', 'float']
+        # if dtype not in NUMERIC_DTYPES:
+        #     raise ValueError(f"`dtype` "{dtype}" is invalid - must be one of {', '.join(NUMERIC_DTYPES)}")
+        # self._validate_dtype(dtype=dtype, category='numeric')
+        self._data = (
+            self._data.withColumns(
+                {
+                    key: F.regexp_replace(str=F.col(key), pattern="(", replacement="-")
+                    for key in columns
+                }
+            )
+            .withColumns(
+                {
+                    key: F.regexp_extract(str=F.col(key), pattern=RE_VALUES, idx=0)
+                    for key in columns
+                }
+            )
+            .withColumns({key: F.col(key).cast(dtype) for key in columns})
+        )
+        return self
+
+    def tdf_cast_date(self, columns: list[str], dtype="date"):
+        # self._validate_dtype(dtype=dtype, category='date')
+        self._data = self._data.withColumns(
+            {key: F.col(key).cast(dtype) for key in columns}
+        )
         return self
 
     def __getattr__(self, attr):
