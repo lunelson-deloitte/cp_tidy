@@ -9,7 +9,8 @@ import pyspark
 
 @define
 class TidyDataFrame:
-    """Decorator class enhancing data pipelines with in-process logging messages
+    """
+    Decorator class enhancing data workflows with in-process logging messages.
 
     The TidyDataFrame extends the native pyspark.sql.DataFrame (DataFrame) by
     giving users immediate feedback as their code executes. Depending on the
@@ -61,11 +62,36 @@ class TidyDataFrame:
         return f"{data_repr} {disabled_options_repr}"
 
     def _log_operation(self, operation, message, level="info"):
-        # consider alias for users; maybe .comment()?
+        """Method for logging operations to console.
+
+        Note
+        ====
+        Used to return None, but now returns self so that users can
+        include the method within their chain of command.
+
+        Example
+        =======
+        >>> (
+            TidyDataFrame(data)
+            .select('ID')
+            ._log_operation("Removing null values from ID column")
+            .filter(~ col('ID').isNull())
+        )
+
+        #> Removing null values from ID column
+        #> filter: contains N rows, removed X rows, returned N-X rows
+        """
         getattr(logger, level)(f"#> {operation}: {message}")
         return self
 
     def _tdf_controller(message: str, alias: str = None):
+        """Orchestrator for decorated DataFrame methods.
+
+        This function packages common operations such that any decorated
+        DataFrame method will perform the following in addition to the
+        user's results.
+        """
+
         def decorator(func):
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
@@ -85,6 +111,25 @@ class TidyDataFrame:
 
     @property
     def data(self):
+        """
+        Return data attribute ("exit" TidyDataFrame)
+
+        Note
+        ====
+        Ideally, this method is used at the end of a chain of commands. More
+        generally, users call TidyDataFrame.data prior to passing the DataFrame
+        to a command that takes a pyspark.sql.DataFrame as input.
+
+        Example
+        =======
+        >>> (
+            TidyDataFrame(data)
+            .select(...)
+            .filter(...)
+            .withColumn(...)
+            .data
+        )
+        """
         self._log_operation(
             "<< exit <<",
             self.__repr__(data_type=type(self._data).__name__),
@@ -263,8 +308,24 @@ class TidyDataFrame:
         self._data = self._data.withColumnRenamed(existing=existing, new=new)
         return self
 
-    ### CATCH ALL OPERATION
     def __getattr__(self, attr):
+        """
+        Override default getattr 'dunder' method.
+
+        TidyDataFrame will (most likely) never cover all pyspark.sql.DataFrame
+        methods for many reasons. However, it still offers users the chance to
+        make use of these methods as if they were calling it from a DataFrame.
+        This function will evaluate if and only if an attribute is not available
+        in TidyDataFrame.
+
+        If the attribute is available in pyspark.sql.DataFrame, the result will
+        be calculated and returned as a TidyDataFrame. This is to allow the user
+        to continue receiving logging messages on methods (if any) called after
+        said attribute.
+
+        If the attribute is not available in pyspark.sql.DataFrame, the
+        corresponding pyspark error will be raised.
+        """
         if hasattr(self._data, attr):
 
             def wrapper(*args, **kwargs):
